@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tea Timer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one screen, a steeping cup ring in the middle, one button under it. System fonts only: no outside requests. */
+:root {
+  --bg: #e9efe9;        /* pale celadon, like a green-tea bowl */
+  --surface: #f6f9f6;
+  --ink: #23302a;       /* deep oolong ink */
+  --muted: #5f6f66;
+  --liquor: #b5762a;    /* the colour the tea steeps to */
+  --ring: #cfdacf;
+  --btn-ink: #f6f9f6;
+  --display: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --digits: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161d19; --surface: #1e2722; --ink: #e4ece6; --muted: #9aaba1; --liquor: #e0a352; --ring: #2c3832; --btn-ink: #161d19; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #161d19; --surface: #1e2722; --ink: #e4ece6; --muted: #9aaba1; --liquor: #e0a352; --ring: #2c3832; --btn-ink: #161d19; color-scheme: dark; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { min-height: 100%; display: grid; place-items: center; padding-block: 24px; box-sizing: border-box; }
+.cup { display: grid; gap: 28px; justify-items: center; text-align: center; width: 100%; max-width: 360px; }
+h1 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 1.75rem; letter-spacing: .01em; text-wrap: balance; }
+.sub { margin: 6px 0 0; color: var(--muted); font-size: .8rem; letter-spacing: .12em; text-transform: uppercase; }
+.dial { position: relative; width: min(78vw, 300px); aspect-ratio: 1; max-width: 100%; }
+.dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.dial circle { fill: none; stroke-width: 10; }
+.track { stroke: var(--ring); }
+.steep { stroke: var(--liquor); stroke-linecap: round; transition: stroke-dashoffset .25s linear; }
+.time { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--digits);
+  font-size: clamp(3.2rem, 17vw, 4.6rem); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+#start { font: inherit; font-size: 1.05rem; font-weight: 600; color: var(--btn-ink); background: var(--ink);
+  border: 0; border-radius: 999px; padding: 16px 40px; min-width: 200px; cursor: pointer; }
+#start:focus-visible { outline: 3px solid var(--liquor); outline-offset: 3px; }
+#start:active { transform: scale(.98); }
+#done { margin: 0; min-height: 1.5em; font-family: var(--display); font-size: 1.25rem; color: var(--liquor); }
+@media (prefers-reduced-motion: reduce) { .steep { transition: none; } #start:active { transform: none; } }
+</style>
+</head>
+<body>
+<main>
+  <section class="cup" aria-labelledby="name">
+    <div>
+      <h1 id="name">Tea Timer</h1>
+      <p class="sub">Black tea · 3 minute steep</p>
+    </div>
+    <div class="dial">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="track" cx="60" cy="60" r="52"></circle>
+        <circle class="steep" id="steep" cx="60" cy="60" r="52"></circle>
+      </svg>
+      <div class="time" id="time" role="timer" aria-live="off">3:00</div>
+    </div>
+    <button id="start" type="button">Start</button>
+    <p id="done" role="status" aria-live="polite"></p>
+  </section>
+</main>
+<script>
+// core:start  (no page, no real clock: tested with a fake clock by check_timer)
+const LENGTH_MS = 3 * 60 * 1000;
+function remaining(endAt, now) { return Math.max(0, endAt - now); }
+function fmt(ms) { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+function makeTimer(clock, length = LENGTH_MS) {
+  let endAt = null;
+  return {
+    start() { endAt = clock() + length; },
+    state() {
+      if (endAt === null) return { phase: "idle", left: length, text: fmt(length) };
+      const left = remaining(endAt, clock());
+      return left === 0 ? { phase: "done", left: 0, text: "0:00" } : { phase: "running", left, text: fmt(left) };
+    },
+  };
+}
+// core:end
+
+(function () {
+  const timer = makeTimer(() => Date.now());
+  const $ = (id) => document.getElementById(id);
+  const ring = $("steep"), C = 2 * Math.PI * 52;
+  ring.style.strokeDasharray = C;
+  let tick = null, audio = null, rang = false;
+
+  // A short, soft two-note chime made in the browser: no sound file to fetch or license.
+  function chime() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      [[660, 0], [880, 0.35]].forEach(([hz, at]) => {
+        const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + at;
+        o.type = "sine"; o.frequency.value = hz;
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+        o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 1);
+      });
+    } catch (e) { /* no sound available: the message still shows */ }
+  }
+
+  function draw() {
+    const s = timer.state();
+    $("time").textContent = s.text;
+    ring.style.strokeDashoffset = C * (s.left / LENGTH_MS);
+    document.title = s.phase === "running" ? s.text + " · Tea Timer" : s.phase === "done" ? "Tea is ready" : "Tea Timer";
+    if (s.phase === "done") {
+      clearInterval(tick); tick = null;
+      $("done").textContent = "Your tea is ready";
+      $("start").textContent = "Start again";
+      if (!rang) { rang = true; chime(); }
+    }
+  }
+
+  $("start").addEventListener("click", () => {
+    // Unlock sound on the tap itself, so the chime can play when the 3 minutes end.
+    try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+    timer.start(); rang = false;
+    $("done").textContent = ""; $("start").textContent = "Restart";
+    clearInterval(tick); tick = setInterval(draw, 250); draw();
+  });
+  // The countdown comes from an end time, so a phone that slept the tab is right again the moment it wakes.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && tick) draw(); });
+  draw();
+})();
+</script>
+</body>
+</html>
